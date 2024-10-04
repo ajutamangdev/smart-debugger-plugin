@@ -1,0 +1,2 @@
+_extends: .github
+tag-template: smart-debugger-$NEXT_MINOR_VERSION

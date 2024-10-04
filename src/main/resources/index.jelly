@@ -1,0 +1,5 @@
+<?jelly escape-by-default='true'?>
+<div>
+    This plugin enhances Jenkins builds with advanced debugging capabilities powered by a Large Language Model (LLM). It allows developers to quickly identify and resolve issues, streamline their workflow, and improve overall build reliability.
+</div>
+
