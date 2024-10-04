@@ -12,31 +12,32 @@ import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 import hudson.model.Run;
 import hudson.model.TaskListener;
+import hudson.util.ListBoxModel;
+import hudson.util.Secret;
 
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.List;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
-import hudson.util.ListBoxModel;
 
 public class SmartDebugger extends Recorder implements SimpleBuildStep {
 
-    private String apiToken;
+    private Secret apiToken;
     private String selectedModel;
 
     @DataBoundConstructor
-    public SmartDebugger(String apiToken, String selectedModel) {
+    public SmartDebugger(Secret apiToken, String selectedModel) {
         this.apiToken = apiToken;
         this.selectedModel = selectedModel;
     }
 
     public String getApiToken() {
-        return apiToken;
+        return apiToken.getPlainText(); 
     }
 
     @DataBoundSetter
-    public void setApiToken(String apiToken) {
+    public void setApiToken(Secret apiToken) { 
         this.apiToken = apiToken;
     }
 
@@ -72,7 +73,7 @@ public class SmartDebugger extends Recorder implements SimpleBuildStep {
     }
 
     private String getDebuggingSuggestions(String buildLogs) {
-        if (apiToken == null || apiToken.isEmpty()) {
+        if (apiToken == null || apiToken.getPlainText().isEmpty()) { // Check if the token is empty
             return "Error: API token not found. Please configure the API token in the job settings.";
         }
         
@@ -88,7 +89,7 @@ public class SmartDebugger extends Recorder implements SimpleBuildStep {
         RequestBody body = RequestBody.create(jsonBody, JSON);
         Request request = new Request.Builder()
             .url("https://api.groq.com/openai/v1/chat/completions")
-            .addHeader("Authorization", "Bearer " + apiToken)
+            .addHeader("Authorization", "Bearer " + apiToken.getPlainText())
             .addHeader("Content-Type", "application/json")
             .post(body)
             .build();
@@ -121,7 +122,7 @@ public class SmartDebugger extends Recorder implements SimpleBuildStep {
 
         @Override
         public boolean isApplicable(Class<? extends AbstractProject> aClass) {
-            return true; // Specify applicable project types
+            return true;
         }
 
         public ListBoxModel doFillSelectedModelItems() {
@@ -133,5 +134,4 @@ public class SmartDebugger extends Recorder implements SimpleBuildStep {
             return items;
         }
     }
-
 }
