@@ -1,26 +1,27 @@
 package io.jenkins.plugins.smartdebugger;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
 import hudson.model.AbstractProject;
-import hudson.tasks.Recorder;
-import hudson.tasks.BuildStepDescriptor;
-import hudson.tasks.Publisher;
-import jenkins.tasks.SimpleBuildStep;
-import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.DataBoundSetter;
 import hudson.model.Run;
 import hudson.model.TaskListener;
+import hudson.tasks.BuildStepDescriptor;
+import hudson.tasks.Publisher;
+import hudson.tasks.Recorder;
 import hudson.util.ListBoxModel;
 import hudson.util.Secret;
-
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.List;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import jenkins.tasks.SimpleBuildStep;
 import okhttp3.*;
+import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.DataBoundSetter;
 
+@Extension
 public class SmartDebugger extends Recorder implements SimpleBuildStep {
 
     private Secret apiToken;
@@ -33,11 +34,11 @@ public class SmartDebugger extends Recorder implements SimpleBuildStep {
     }
 
     public String getApiToken() {
-        return apiToken.getPlainText(); 
+        return apiToken != null ? apiToken.getPlainText() : "";
     }
 
     @DataBoundSetter
-    public void setApiToken(Secret apiToken) { 
+    public void setApiToken(Secret apiToken) {
         this.apiToken = apiToken;
     }
 
@@ -50,8 +51,13 @@ public class SmartDebugger extends Recorder implements SimpleBuildStep {
         this.selectedModel = selectedModel;
     }
 
+    public SmartDebugger() {
+        // No-argument constructor
+    }
+
     @Override
-    public void perform(Run<?, ?> run, FilePath workspace, Launcher launcher, TaskListener listener) throws InterruptedException, IOException {
+    public void perform(Run<?, ?> run, FilePath workspace, Launcher launcher, TaskListener listener)
+            throws InterruptedException, IOException {
         PrintStream logger = listener.getLogger();
 
         // Capture build logs
@@ -72,47 +78,77 @@ public class SmartDebugger extends Recorder implements SimpleBuildStep {
         return String.join("\n", logLines);
     }
 
+
     private String getDebuggingSuggestions(String buildLogs) {
-        if (apiToken == null || apiToken.getPlainText().isEmpty()) { // Check if the token is empty
+        // Check if API token is null or empty
+        if (apiToken == null || apiToken.getPlainText().isEmpty()) {
             return "Error: API token not found. Please configure the API token in the job settings.";
         }
-        
+    
         OkHttpClient client = new OkHttpClient();
         ObjectMapper mapper = new ObjectMapper();
-
+    
         MediaType JSON = MediaType.get("application/json; charset=utf-8");
         String truncatedLogs = buildLogs.length() > 4000 ? buildLogs.substring(0, 4000) : buildLogs;
-        String jsonBody = String.format("{\"messages\": [{\"role\": \"user\", \"content\": \"Analyze these Jenkins build logs and provide debugging suggestions: %s. Format your response as a numbered list of short, actionable points, focusing on the most critical issues.\"}], \"model\": \"%s\"}", 
-            truncatedLogs.replace("\"", "\\\"").replace("\n", "\\n"),
-            selectedModel);
-
+        String jsonBody = String.format(
+                "{\"messages\": [{\"role\": \"user\", \"content\": \"Analyze these Jenkins build logs and provide debugging suggestions: %s. Format your response as a numbered list of short, actionable points, focusing on the most critical issues.\"}], \"model\": \"%s\"}",
+                truncatedLogs.replace("\"", "\\\"").replace("\n", "\\n"), selectedModel);
+    
         RequestBody body = RequestBody.create(jsonBody, JSON);
         Request request = new Request.Builder()
-            .url("https://api.groq.com/openai/v1/chat/completions")
-            .addHeader("Authorization", "Bearer " + apiToken.getPlainText())
-            .addHeader("Content-Type", "application/json")
-            .post(body)
-            .build();
-
+                .url("https://api.groq.com/openai/v1/chat/completions")
+                .addHeader("Authorization", "Bearer " + apiToken.getPlainText())
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build();
+    
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                String errorBody = response.body() != null ? response.body().string() : "No error body";
-                throw new IOException("Unexpected code " + response + ". Error body: " + errorBody);
+                return "Unexpected response code: " + response.code() + ". Error: " + (response.body() != null ? response.body().string() : "No error body");
             }
-
-            String responseBody = response.body().string();
-            return mapper.readTree(responseBody)
-                         .path("choices")
-                         .get(0)
-                         .path("message")
-                         .path("content")
-                         .asText();
+    
+            ResponseBody responseBody = response.body();
+            if (responseBody == null) {
+                return "Error: Received null response body from API.";
+            }
+    
+            String responseBodyString = responseBody.string();
+            if (responseBodyString == null || responseBodyString.isEmpty()) {
+                return "Error: Received empty response body from API.";
+            }
+    
+            JsonNode jsonNode = mapper.readTree(responseBodyString);
+            if (jsonNode == null) {
+                return "Error: Failed to parse JSON response.";
+            }
+    
+            JsonNode choicesNode = jsonNode.path("choices");
+            if (!choicesNode.isArray() || choicesNode.size() == 0) {
+                return "Error: Unexpected response format from API. No choices found.";
+            }
+    
+            JsonNode firstChoice = choicesNode.get(0);
+            if (firstChoice == null) {
+                return "Error: First choice in API response is null.";
+            }
+    
+            JsonNode messageNode = firstChoice.path("message");
+            if (messageNode.isMissingNode()) {
+                return "Error: 'message' node is missing in API response.";
+            }
+    
+            JsonNode contentNode = messageNode.path("content");
+            if (contentNode.isMissingNode()) {
+                return "Error: 'content' node is missing in API response.";
+            }
+    
+            String content = contentNode.asText();
+            return content != null ? content : "Error: Content is null.";
         } catch (IOException e) {
             e.printStackTrace();
             return "Error fetching debugging suggestions: " + e.getMessage();
         }
     }
-
     @Extension
     public static final class DescriptorImpl extends BuildStepDescriptor<Publisher> {
         @Override
